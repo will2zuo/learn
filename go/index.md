@@ -16,3 +16,4 @@ P：承上启下的调度器
 M：machine，go 中对线程的抽象 => m 不直接执行 g，由 p 代理执行
 
 GMP 模型调度的过程
+![gmp.png](gmp.png)
