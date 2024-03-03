@@ -1,6 +1,9 @@
 ## 基本数据结构
 - string
-- 
+- hash
+- list
+- sort
+- zsort
 ## Redis 的单线程为什么那么快？
 - 在内存中运行
 - 多路复用机制
