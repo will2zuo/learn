@@ -78,8 +78,147 @@
 ## Go Map 的实现
 底层用的哈希查找表，并用链表法来解决哈希冲突
 
+基本数据结构
+
+```go
+type hmap struct {
+    count     int // map中键值对的数量
+    B         uint8 // 桶的数量，即哈希表中桶的个数
+    noverflow uint16 // 溢出桶的数量
+    hash0     uint32 // 哈希种子,它能为哈希函数的结果引入随机性，这个值在创建哈希表时确定，并在调用哈希函数时作为参数传入
+    buckets   unsafe.Pointer // 桶数组的指针
+    oldbuckets unsafe.Pointer // 旧桶数组的指针，用于扩容时的数据迁移
+    nevacuate uintptr // 扩容时的标记位
+    extra *mapextra // 附加信息，包括溢出桶和哈希表的状态等
+}
+
+type mapextra struct {
+	overflow    *[]*bmap
+	oldoverflow *[]*bmap
+	nextOverflow *bmap
+}
+
+// 在编译期间会转化
+type bmap struct {
+    tophash [bucketCnt]uint8 // 存储哈希值的高8位
+    keys    [bucketCnt]key   // 存储键的数组
+    values  [bucketCnt]value // 存储值的数组
+    overflow *bmap           // 溢出桶的指针
+}
+```
+![img_2.png](img_2.png)
+哈希表 runtime.hmap 的桶是 runtime.bmap。每一个 runtime.bmap 都能存储 8 个键值对，当哈希表中存储的数据过多，单个桶已经装满时就会使用 extra.nextOverflow 中桶存储溢出的数据。
+
+桶的结构体 runtime.bmap 在 Go 语言源代码中的定义只包含一个简单的 tophash 字段，tophash 存储了键的哈希的高 8 位，通过比较不同键的哈希的高 8 位可以减少访问键值对次数以提高性能
+
+随着哈希表存储的数据逐渐增多，我们会扩容哈希表或者使用额外的桶存储溢出的数据，不会让单个桶中的数据超过 8 个，不过溢出桶只是临时的解决方案，创建过多的溢出桶最终也会导致哈希的扩容
+
+### map 初始化
+#### 字面量
+一般是通过 key：value 的方式
+```go
+hash := map[string]int{
+	"1": 2,
+	"3": 4,
+	"5": 6,
+}
+```
+当哈希表中的元素数量少于或者等于 25 个时，会将所有的键值对一次加入到哈希表中，当哈希表中元素的数量超过了 25 个，编译器会创建两个数组分别存储键和值，这些键值对会通过如下所示的 for 循环加入哈希
+
+### map 的增删改查
+- 增：根据hash算法查到对应的桶，如果桶没有存满，就顺序在后面存，如果存满了，则存入溢出桶，通过链表链接
+- 查：根据hash算法找到对应的桶，再经过高8位找到对应的值返回，如果没有，就去溢出桶找，没有直接返回
+- 删：delete
 ### map 中的 key 为什么是无序的
 因为在遍历map 时，不是固定的从 0 的 bucket 开始遍历的，而是随机序号的 bucket 开始遍历的
+### map 扩容
+#### 什么时候扩容
+- 装载因子大于 6.5 = 元素个数/桶的个数
+- 存在太多的溢出桶
+  - 等量扩容
+  - 其实内存整理，清理过多的溢出桶
+  - 怎么判断溢出桶太多
+    - 桶 b 的个数小于 15
+      - 溢出桶数量超过 2^B 
+    - 桶 b 的个数大于 15
+      - 溢出桶的数量超过 2^15
+
+#### map 扩容是动态扩容
+- 在调用写操作的时候增量扩容
+- 从 oldbucket 迁移到bucket 中
+
+### hash 算法
+#### 开放寻址法
+依次探测和对比目标键值是否在哈希表中
+- 存在：会将值写在下一个索引为空的位置
+- 不存在：就直接写到当前位置
+#### 拉链法
+通过 hash 算法找到一个桶
+- 如果找到键相同的键值对，直接更新键值对
+- 没有找到相同的键，直接在后面更新键值对，如果当前桶满了，就更新到溢出桶中
+- 用的是链表做为底层的数据结构
 ## Go channel
+### 数据结构
+```go
+type hchan struct {
+  //channel分为无缓冲和有缓冲两种。
+  //对于有缓冲的channel存储数据，借助的是如下循环数组的结构
+	qcount   uint           // 循环数组中的元素数量
+	dataqsiz uint           // 循环数组的长度
+	buf      unsafe.Pointer // 指向底层循环数组的指针
+	elemsize uint16 //能够收发元素的大小
+  
+
+	closed   uint32   //channel是否关闭的标志
+	elemtype *_type //channel中的元素类型
+  
+  //有缓冲channel内的缓冲数组会被作为一个“环型”来使用。
+  //当下标超过数组容量后会回到第一个位置，所以需要有两个字段记录当前读和写的下标位置
+	sendx    uint   // 下一次发送数据的下标位置
+	recvx    uint   // 下一次读取数据的下标位置
+  
+  //当循环数组中没有数据时，收到了接收请求，那么接收数据的变量地址将会写入读等待队列
+  //当循环数组中数据已满时，收到了发送请求，那么发送数据的变量地址将写入写等待队列
+	recvq    waitq  // 读等待队列
+	sendq    waitq  // 写等待队列
+
+
+	lock mutex //互斥锁，保证读写channel时不存在并发竞争问题
+}
+```
+![img_3.png](img_3.png)
+
+- 用来保存goroutine之间传递数据的循环链表。=====> buf。
+- 用来记录此循环链表当前发送或接收数据的下标值。=====> sendx和recvx。
+- 用于保存向该chan发送和从改chan接收数据的goroutine的队列。=====> sendq 和 recvq
+- 保证channel写入和读取数据时线程安全的锁。 =====> lock
+
+channel 出现 panic 场景：
+- 向已经关闭的 channel 写数据
+- 关闭已经关闭的 channel
+- 关闭为 nil 的 channel
+
+chan 出现阻塞的场景：
+- 给 nil 的chan 发送数据
+- 读取 nil 的 chan
+
 ## slice 的扩容机制
+go.1.18 版本之前：原 slice 的容量小于 1024 的扩容 2 倍，大于 1024 的扩容 1.25 倍
+
+新版本的 go，原容量小于 256 的，扩容 2倍，大于 256 的扩容 newcap = oldcap+(oldcap+3*256)/4
+
 ## go 中 make 和 new 的区别
+都是用来分配内存的内建函数
+- new： 分配空间后是将内存清零，并没有初始化内存；new 可以为每种类型分配内存；返回的是指向内存的指针
+- make：分配空间之后，是初始化内存，不是清零；make 只用于 slice、map、chan 三种；make 返回的是类型；
+
+## map 删除一个 key，它的内存会被释放吗？
+不会，只会做一个标记 EmptyOne，如果 map == nil 的时候，才会被 gc 回收
+
+## go context 的作用
+- 上下文控制
+- go goroutine 之间的数据交换
+- 超时控制
+
+## 什么情况下 go 内存会泄露
+- goroutine泄露，一般是没有被关闭或者没有添加超时控制，让 goroutine 一直阻塞，不能被 gc 回收
