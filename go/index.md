@@ -81,3 +81,5 @@
 ### map 中的 key 为什么是无序的
 因为在遍历map 时，不是固定的从 0 的 bucket 开始遍历的，而是随机序号的 bucket 开始遍历的
 ## Go channel
+## slice 的扩容机制
+## go 中 make 和 new 的区别
