@@ -360,7 +360,7 @@ mysql 在完成一条更新操作之后，会生成一条 binlog 日志，事务
 - binlog 的主要作用是用作备份数据和主从复制，redo log 是用于崩溃恢复
 #### 主从数据库流程
 ![img_12.png](img_12.png)
-- 写入 binlog 日志：主库记录 binlog 日志，更新本队数据
+- 写入 binlog 日志：主库记录 binlog 日志，更新本地数据
 - 复制 binlog 日志：主库把 binlog 日志复制到每个从库上，从库保存在中继日志中
 - 回放 binlog 日志：回放 binlog 日志，并更新引擎中的数据
 
