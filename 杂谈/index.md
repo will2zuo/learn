@@ -7,9 +7,6 @@
    group_members(gid, uid, last_ack_msgid);
    group_msgs(msgid,gid,sender_uid,time,content);
 
-
-
-
 #### go 的互斥锁，读写锁，sync.map
 - var mutex sync.Mutex
 - var mutex sync.RWMutex
@@ -35,8 +32,6 @@ having 从分组的结果中再次筛选，where 过滤的是行
 1. 协议转换 rpc 转 http 或者 http 转 rpc
 2. 统一鉴权、统一监控、服务熔断、降级、流量控制、路由转发、服务发现、异步调用、链路调用
 
-
-
 #### mq作用：解耦、异步处理、削峰填谷
 #### mq 面临的问题：
 - 重复消费的问题；
@@ -47,7 +42,7 @@ having 从分组的结果中再次筛选，where 过滤的是行
 - 靠性传输问题/保证消息不丢失
 		- 发送端 ： 重试机制，保证消息投递成功，收到 mq server 的 ack 确认就认为消息投递成功 
         - server: 数据持久化，集群模式 kafka 的 topic 有 n 个 partition ，每个 partition 在不同机器上还有副本
-        -  消费端：手动 ack 确认或者 offset
+        - 消费端：手动 ack 确认或者 offset
 
 - 使用事务的方式，阻塞的等待成功或者失败，会导致吞吐量减少；
           confirm 确认，异步不会造成阻塞
