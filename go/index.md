@@ -220,5 +220,18 @@ go.1.18 版本之前：原 slice 的容量小于 1024 的扩容 2 倍，大于 1
 - go goroutine 之间的数据交换
 - 超时控制
 
-## 什么情况下 go 内存会泄露
+## go 协程泄露的场景以及排查方法
 - goroutine泄露，一般是没有被关闭或者没有添加超时控制，让 goroutine 一直阻塞，不能被 gc 回收
+- 排查
+  - 使用runtime.NumGoroutine()监控数量，结合pprof的goroutine profile生成堆栈跟踪。
+
+## 如何减少GC对延迟敏感服务的影响？
+- 降低分配频率，服用对象，避免频繁创建大对象
+- 调整GC参数：设置GOGC（默认100，降低值减少堆增长，但增加GC频率）
+- 监控工具：通过GODEBUG=gctrace=1输出GC日志，分析runtime.MemStats
+
+## 设计一个支持百万并发的WebSocket服务
+- 架构层：水平扩展+无状态设计，使用Nginx反向代理+负载均衡。
+- 协议层：WebSocket over TCP，启用压缩（permessage-deflate）。
+- Go实现：每个连接一个Goroutine，使用gorilla/websocket库，通过Redis Pub/Sub广播消息。
+
