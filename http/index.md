@@ -132,6 +132,10 @@
 
 
 ### get 和 post 的区别
+- 数据传输大小： get 传输数据的大小是 2kb，而 post 一般是没有限制的，但是会受内存大小影响，一般通过修改 php.ini 配置文件来修改
+- 数据传输方式： get 是通过 url 传递参数的，在 url 中可以看到参数；post 是在表单中使用 post 方法提交
+- 数据安全性：get 参数可见，容易被攻击
+- 缓存： get 可以被缓存， post 不能被缓存
 
 ### HTTP/1.1、HTTP/2 和 HTTP/3 对比表
 
@@ -152,3 +156,132 @@
 - **队头阻塞**：HTTP/1.1 因顺序处理请求而阻塞；HTTP/2 仅因 TCP 丢包阻塞；HTTP/3 无阻塞。
 - **握手延迟**：HTTP/3 的 0-RTT 需已建立过连接，首次连接仍需 1-RTT。
 - **移动端优化**：HTTP/3 支持 IP 切换不断连（如 Wi-Fi 切 5G），且抗弱网能力更强。
+
+### tcp 如何解决粘包的问题
+# TCP 粘包问题解决方案
+
+## 1. 消息定长法
+- ​**原理**​  
+  固定每个消息的长度（如每个包 100 字节），不足部分填充空值。
+
+- ​**代码示例**
+  ```python
+  # 发送端：填充定长
+  message = "data".ljust(100, '\0')
+  socket.send(message)
+  
+  # 接收端：按定长读取
+  while True:
+      chunk = socket.recv(100)
+      if not chunk: break
+      # 处理 chunk（需去除填充的空值）
+  ```
+
+- ​**优点**​  
+  ✅ 实现简单
+- ​**缺点**​  
+  ❌ 浪费带宽  
+  ❌ 灵活性差
+
+---
+
+## 2. 分隔符法
+- ​**原理**​  
+  在消息结尾添加特殊分隔符（如 `\n` 或自定义符号）。
+
+- ​**代码示例**
+  ```python
+  # 发送端：添加分隔符
+  message = "data|"
+  socket.send(message.encode())
+  
+  # 接收端：按分隔符拆分
+  buffer = ""
+  while True:
+      data = socket.recv(1024).decode()
+      if not data: break
+      buffer += data
+      while "|" in buffer:
+          msg, buffer = buffer.split("|", 1)
+          # 处理 msg
+  ```
+
+- ​**优点**​  
+  ✅ 灵活，适合文本协议
+- ​**缺点**​  
+  ❌ 需转义分隔符  
+  ❌ 性能较低（需遍历字符）
+
+---
+
+## 3. 长度前缀法（推荐）
+- ​**原理**​  
+  在消息头部添加长度字段（如 4 字节表示数据长度）。
+
+- ​**代码示例**
+  ```python
+  # 发送端：添加长度前缀
+  data = "payload"
+  length = len(data).to_bytes(4, byteorder='big')  # 4字节大端序
+  socket.send(length + data.encode())
+  
+  # 接收端：先读长度，再读数据
+  buffer = bytearray()
+  while True:
+      chunk = socket.recv(4096)
+      if not chunk: break
+      buffer.extend(chunk)
+      while len(buffer) >= 4:
+          length = int.from_bytes(buffer[:4], byteorder='big')
+          if len(buffer) < 4 + length: break
+          msg = buffer[4:4+length].decode()
+          buffer = buffer[4+length:]
+          # 处理 msg
+  ```
+
+- ​**优点**​  
+  ✅ 高效，适合二进制协议  
+  ✅ 无数据冗余或转义问题
+- ​**缺点**​  
+  ❌ 需处理字节序和长度溢出
+
+---
+
+## 4. 协议封装法
+- ​**原理**​  
+  使用现成的应用层协议（如 HTTP、Protobuf）封装数据。
+
+- ​**示例协议**​
+   - ​**HTTP**：通过 `Content-Length` 或分块传输标识长度
+   - ​**Protobuf**：序列化消息自带长度前缀
+
+---
+
+## 5. 高级框架支持
+- ​**Netty (Java)**​  
+  通过 `LengthFieldBasedFrameDecoder` 自动处理粘包。
+
+- ​**Go 的 `bufio.Scanner`**​
+  ```go
+  scanner := bufio.NewScanner(conn)
+  scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+      // 自定义拆分逻辑（如按长度前缀）
+  })
+  ```
+
+---
+
+## 方法对比表
+| 方法         | 适用场景                          | 性能  | 复杂度 |
+|--------------|----------------------------------|-------|--------|
+| 消息定长法   | 固定长度协议（如传感器数据）      | 高    | 低     |
+| 分隔符法     | 文本协议（如日志、命令行交互）    | 中    | 中     |
+| 长度前缀法   | 二进制协议（如游戏、金融数据）    | 高    | 中     |
+| 协议封装法   | 标准化或跨平台通信                | 中    | 低     |
+
+---
+
+## 总结建议
+1. ​**优先选择长度前缀法**：适合高性能二进制协议。
+2. ​**文本协议可用分隔符法**：如日志流处理。
+3. ​**避免重复造轮子**：直接使用成熟协议（如 Protobuf/HTTP）。
