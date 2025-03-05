@@ -157,131 +157,39 @@
 - **握手延迟**：HTTP/3 的 0-RTT 需已建立过连接，首次连接仍需 1-RTT。
 - **移动端优化**：HTTP/3 支持 IP 切换不断连（如 Wi-Fi 切 5G），且抗弱网能力更强。
 
-### tcp 如何解决粘包的问题
-# TCP 粘包问题解决方案
 
-## 1. 消息定长法
-- ​**原理**​  
-  固定每个消息的长度（如每个包 100 字节），不足部分填充空值。
+## tcp 是什么，怎么工作的
+### tcp 介绍
+### tcp 三次握手
+#### tcp 为什么是三次握手，不是四次或者两次
+#### tcp 每次握手失败，会发生什么
+#### syn 攻击是什么，怎么避免
+#### tcp 四次挥手
+#### tcp 四次挥手中某次失败会发生什么
+#### 如果已经建立了连接，但是客户端突然出现故障了怎么办？
+#### 如果已经建立了连接，但是服务端的进程崩溃会发生什么？
+#### tcp 重传机制
+- 超时重传，在指定的时间内，没有收到对方的 ack 应答
+  - 两种情况下会超时重传
+    - 数据包丢失
+    - 没有收到 ack 确认应答
+  - 重传时间怎么定义
+    - 根据往返时延的一个动态变化值算出来，通过采样加权平均
+- 快速重传，不以时间为驱动，以数据为驱动
+  - ![img_4.png](img_4.png)
+- SACK 方法【选择性确认】
+  - ![img_5.png](img_5.png)
+  - 将收到的数据发送给发送方，发送方就只穿丢失的数据
+- Duplicate SACK，使用了 SACK 来告诉「发送方」有哪些数据被重复接收了
+  - 可以让「发送方」知道，是发出去的包丢了，还是接收方回应的 ACK 包丢了;
+  - 可以知道是不是「发送方」的数据包被网络延迟了;
+  - 可以知道网络中是不是把「发送方」的数据包给复制了;
+#### tcp 滑动窗口
+#### tcp 流量控制
+#### tcp 拥塞控制
+#### tcp 是如何解决粘包问题
 
-- ​**代码示例**
-  ```python
-  # 发送端：填充定长
-  message = "data".ljust(100, '\0')
-  socket.send(message)
-  
-  # 接收端：按定长读取
-  while True:
-      chunk = socket.recv(100)
-      if not chunk: break
-      # 处理 chunk（需去除填充的空值）
-  ```
 
-- ​**优点**​  
-  ✅ 实现简单
-- ​**缺点**​  
-  ❌ 浪费带宽  
-  ❌ 灵活性差
-
----
-
-## 2. 分隔符法
-- ​**原理**​  
-  在消息结尾添加特殊分隔符（如 `\n` 或自定义符号）。
-
-- ​**代码示例**
-  ```python
-  # 发送端：添加分隔符
-  message = "data|"
-  socket.send(message.encode())
-  
-  # 接收端：按分隔符拆分
-  buffer = ""
-  while True:
-      data = socket.recv(1024).decode()
-      if not data: break
-      buffer += data
-      while "|" in buffer:
-          msg, buffer = buffer.split("|", 1)
-          # 处理 msg
-  ```
-
-- ​**优点**​  
-  ✅ 灵活，适合文本协议
-- ​**缺点**​  
-  ❌ 需转义分隔符  
-  ❌ 性能较低（需遍历字符）
-
----
-
-## 3. 长度前缀法（推荐）
-- ​**原理**​  
-  在消息头部添加长度字段（如 4 字节表示数据长度）。
-
-- ​**代码示例**
-  ```python
-  # 发送端：添加长度前缀
-  data = "payload"
-  length = len(data).to_bytes(4, byteorder='big')  # 4字节大端序
-  socket.send(length + data.encode())
-  
-  # 接收端：先读长度，再读数据
-  buffer = bytearray()
-  while True:
-      chunk = socket.recv(4096)
-      if not chunk: break
-      buffer.extend(chunk)
-      while len(buffer) >= 4:
-          length = int.from_bytes(buffer[:4], byteorder='big')
-          if len(buffer) < 4 + length: break
-          msg = buffer[4:4+length].decode()
-          buffer = buffer[4+length:]
-          # 处理 msg
-  ```
-
-- ​**优点**​  
-  ✅ 高效，适合二进制协议  
-  ✅ 无数据冗余或转义问题
-- ​**缺点**​  
-  ❌ 需处理字节序和长度溢出
-
----
-
-## 4. 协议封装法
-- ​**原理**​  
-  使用现成的应用层协议（如 HTTP、Protobuf）封装数据。
-
-- ​**示例协议**​
-   - ​**HTTP**：通过 `Content-Length` 或分块传输标识长度
-   - ​**Protobuf**：序列化消息自带长度前缀
-
----
-
-## 5. 高级框架支持
-- ​**Netty (Java)**​  
-  通过 `LengthFieldBasedFrameDecoder` 自动处理粘包。
-
-- ​**Go 的 `bufio.Scanner`**​
-  ```go
-  scanner := bufio.NewScanner(conn)
-  scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-      // 自定义拆分逻辑（如按长度前缀）
-  })
-  ```
-
----
-
-## 方法对比表
-| 方法         | 适用场景                          | 性能  | 复杂度 |
-|--------------|----------------------------------|-------|--------|
-| 消息定长法   | 固定长度协议（如传感器数据）      | 高    | 低     |
-| 分隔符法     | 文本协议（如日志、命令行交互）    | 中    | 中     |
-| 长度前缀法   | 二进制协议（如游戏、金融数据）    | 高    | 中     |
-| 协议封装法   | 标准化或跨平台通信                | 中    | 低     |
-
----
-
-## 总结建议
-1. ​**优先选择长度前缀法**：适合高性能二进制协议。
-2. ​**文本协议可用分隔符法**：如日志流处理。
-3. ​**避免重复造轮子**：直接使用成熟协议（如 Protobuf/HTTP）。
+## udp 是什么，怎么工作的
+## tcp 和 udp 有什么区别，分别应用到什么场景
+## udp 如何保证可靠传输
