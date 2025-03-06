@@ -330,4 +330,12 @@ go.1.18 版本之前：原 slice 的容量小于 1024 的扩容 2 倍，大于 1
     - 维护两个 map，一个是只读 map，一个是读写 map
     - 读写分离
   - 适合读多写少的场景
+  - 
+#### sync.map 怎么实现
+1. 读写分离，一个 read，读的字段只读 read 上的； 和一个 dirty，新写的字段 在 dirty字段上
+2. 读取的时候先读 read 里，如果没有在读 dirty
+3. 读 read 的时候不需要加锁，读或者写 dirty 需要加锁
+4. misses 字段来记录击穿的次数（misses = len（dirty）），达到一定次数就会将 dirty 的数据缓存到 read 里
+5. 适合多读少写的场景
+6. 对于删除是通过标记 amended 来延迟删除，是在 store 中删除
 
