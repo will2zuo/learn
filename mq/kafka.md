@@ -156,3 +156,65 @@
           - 设置Producer端参数transactional.id。最好为其设置一个有意义的名字。
           
 ## 消费组
+- 重要特征
+  - 组内可以有一个或者多个消费者实例（Consumer Instance）
+  - Group ID是一个字符串，在一个Kafka集群中，它标识唯一的一个Consumer Group。
+  - 消费者组订阅主题，主题的每个分区只能被组内的一个消费者消费
+  - 理想情况下，Consumer实例的数量应该等于该Group订阅主题的分区总数。
+- 消费组的位移
+  - 对于Consumer Group而言，位移是一组KV对，Key是分区，V对应Consumer消费该分区的最新位移
+  - Kafka的老版本消费者组的位移保存在Zookeeper中，好处是Kafka减少了Kafka Broker端状态保存开销。但ZK是一个分布式的协调框架，不适合进行频繁的写更新，这种大吞吐量的写操作极大的拖慢了Zookeeper集群的性能。
+  - Kafka的新版本采用了将位移保存在Kafka内部主题的方法。
+- 消费组的重平衡
+  - 触发条件
+    - 组成员发生变更，比如有新的 consumer 或者 consumer 离开/崩溃
+    - 订阅的主题数发生变更；
+    - 订阅主题的分区数发生变更
+  - 影响：Rebalance 的设计是要求所有consumer实例共同参与，全部重新分配所有用分区。并且Rebalance的过程比较缓慢，这个过程消息消费会中止
+
+## 位移主题
+- 出现的原因
+  - 老版本将位移管理依托在 zookeeper 上，consumer 重启后从 zookeeper 重新获取位移数据，但 zookeeper 不适合高频的写操作
+  - 新版本（0.8.2）将位移信息保存到 consumer_offsets 主题中（内部主题）
+- 作用
+  - 保存consumer的消费信息
+- 消息格式自定义
+  - Group ID + 主题名 + 分区
+- 什么时候被创建
+  - 当Kafka集群中的第一个Consumer程序启动时，Kafka会自动创建位移主题。也可以手动创建
+  - 默认分区：Broker端的offsets.topic.num.partitions的取值，默认为50
+  - 默认副本：Broker端的offsets.topic.replication.factor的取值，默认为3
+- 使用
+  - kafka 提交位移信息
+  - 手动提交和自动提交
+    - 自动提交存在的问题：只要Consumer一直启动着，它就会无限期地向位移主题写入消息。
+      - 解决：
+        - 使用Compact策略来删除位移主题中的过期消息，避免该主题无限期膨胀
+        - Kafka提供了专门的后台线程（Log Cleaner）定期地巡检待Compact的主题，看看是否存在满足条件的可删除数据
+
+## 消费组重平衡
+- 在重平衡过程中，STW，所有的消费组都不能消费消息
+- 重平衡的弊端
+  - 影响消费端的 TPS
+  - Rebalance 很慢，需要所有的 consumer 参与，如果consumer 多，需要很长时间
+  - reblance 效率低，全部 consumer 参与
+- reblance 发生的时机
+  - 组成员数量发生变化
+    - 如何监听
+  - 订阅主题数发生变化
+  - 订阅主题的分区数发生变化
+- 可以避免的 reblance
+  - 未能及时发送心跳，导致Consumer被“踢出”Group而引发的
+    - 设置session.timeout.ms = 6s。
+    - 设置heartbeat.interval.ms = 2s。
+    - 要保证Consumer实例在被判定为“dead”之前，能够发送至少3轮的心跳请求，即session.timeout.ms >= 3 * heartbeat.interval.ms。
+  - Consumer消费时间过长导致的
+    - max.poll.interval.ms参数值
+  - 还存在不合理的 reblance，需要关注 consumer 的 gc 表现
+
+## 位移提交
+- 是什么
+  - Consumer 要向Kafka汇报自己的位移数据，这个汇报过程被称为提交位移
+  - Consumer需要为分配给它的每个分区提交各自的位移数据。
+- 对于用户来说：手动或自动
+- 对于 consumer 来说：同步或者异步
