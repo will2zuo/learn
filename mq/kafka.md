@@ -235,4 +235,80 @@
   - 主动关闭
     - 手动调用KafkaConsumer.close()方法，或者是执行Kill命令
   - kafka 关闭
-    - 消费者端参数connection.max.idle.ms控制的，默认9分钟，没有任何请求
+    - 消费者端参数connection.max.idle.ms控制的，默认9分钟，没有任何请求，如果一直循环获取 poll消费消息，就会实现长链接的效果
+
+## 消费组消息进度监控
+- 为什么要监控
+  - 消费者的消费进度可能有滞后性，导致生产的速度远远大于消费的速度，造成消费积压，可能造成业务损失
+  - 这个滞后程度称为：消费者Lag或Consumer Lag。
+- 如何监控
+  - 使用Kafka自带的命令行工具kafka-consumer-groups脚本。
+    - $ bin/kafka-consumer-groups.sh --bootstrap-server <Kafka broker连接信息> --describe --group <group名称>
+      - 展示的信息：主题，分区，该消费者组最新消费消息的位移值（CURRENT-OFFSET值），每个分区当前最新生产的消息的位移值（LOG-END-OFFSET）,LAG（前两者的差值），消费者实例ID，消费者连接Broker的主机名以及消费者的CLENT-ID信息。
+  - 使用Kafka Java Consumer API编程。
+    - 首先获取给定的消费者组的最新消费消息的位移
+    - 再获取订阅分区的最新消息位移
+    - 最后执行相应的减法操作，获取Lag值并封装进一个Map对象。
+  - 使用Kafka自带的JMX监控指标。
+    - Kafka消费者提供了一个名为kafka.consumer:type=consumer-fetch-manager-metrics,client-id=“{client-id}”的JMX指标
+    - records-lag-max和records-lead-min  分别表示消费者在测试窗口时间内曾经达到的最大的Lag值和最小的Lead值。
+      - Lead值是指消费者最新消费消息的位移和分区当前第一条消息的位移的差值。即：Lag越大，Lead就越小。
+
+## kafka 的副本机制
+- 副本机制有什么好处/优势
+  - 提供数据冗余。即使系统部分组件失效，系统依然能够继续运转，因而增加了整体可用性以及数据持久性。
+  - 提供高伸缩性。支持横向扩展，能够通过增加机器的方式来提升读性能，进而提高读操作吞吐量。
+  - 改善数据局部性。允许将数据放入与用户地理位置相近的地方，从而降低系统延时。
+- 副本定义
+  - 所谓副本（Replica），本质就是一个只能追加写消息的提交日志
+- 副本角色
+  - leader 副本
+    - 对外提供读写服务
+  - follower 副本
+    - 不对外提供读写服务
+    - 拉取 leader 副本的数据，异步拉取、
+    - 设计目的：
+      - 方便实现“Read-your-writes”。当你使用生产者API向Kafka成功写入消息后，马上使用消费者API去读取刚才生产的消息。
+        - 如果从 follower 副本读，可能不能马上看到最新写的消息（异步拉取）
+      - 方便实现单调读（Monotonic Reads）。对于一个消费者用户而言，在多次消费消息时，它不会看到某条消息一会儿存在一会儿不存在。
+        - 如果两个 follower 副本，如果 A 拉到了 leader 的消息，B 还未拉到，此时消费组先从 A 读，再从 B 读，就可能一会看见新消息一会看不见
+  - In-sync Replicas ISR副本集合，是动态调整的
+    - 与 leader 同步的副本集合
+    - 如何进入 ISR
+      - ISR不只是追随者副本集合，它必然包括Leader副本。甚至在某些情况下，ISR只有Leader这一个副本
+      - 这个标准就是Broker端参数replica.lag.time.max.ms参数值,Follower副本能够落后Leader副本的最长时间间隔，当前默认值是10秒。
+- Unclean领导者选举（Unclean Leader Election）
+  - 为什么会出现
+    - ISR 副本集合空了，也就是 leader 副本的 broker 挂了
+  - 流程
+    - Broker端参数unclean.leader.election.enable控制是否允许Unclean领导者选举。【建议不开启】
+    - 从非 ISR 副本集合中选取新的 leader 副本
+  - 优劣
+    - 优点：保持高可用
+    - 缺点：可能会丢失数据，因为不在 ISR 副本集合中的副本，已经落后 leader 副本消息太多
+
+## 请求是怎么处理的
+- 所有的请求都是通过TCP网络以Socket的方式进行通讯的。
+- 常见的处理请求的两种方法
+  - 顺序处理请求 -> 吞吐量差
+  - 每个请求使用单独的线程处理
+- kafka 的处理方式，Reactor 模式
+  - Reactor模式是事件驱动架构的一种实现方式，特别适应用于处理多个客户端并发向服务端发送请求的场景
+  - ![img_2.png](img_2.png)
+    - 多个客户端发送请求大 Reactor，reactor 中的分发线程 dispatcher（也是Acceptor？【只用于分发请求，不做逻辑处理】），将请求发送到多个工作线程
+  - ![img_3.png](img_3.png)
+    - broker 的组件 SocketServer == dispatcher，也有工作线程池 == 网络线程池
+    - 轮询的方式将请求发送到 网络线程池 中
+    - 网络线程池收到请求又是怎么处理的？
+      - ![img_4.png](img_4.png)
+      - 网络线程拿到请求后放入共享队列中，Broker端还有个IO线程池，负责从共享队列取出请求，执行
+        - Producer 生产请求，写入磁盘
+        - FETCH 请求，则从磁盘或页缓存中读取消息。
+        - METADATA请求：返回Topic分区、Leader副本等元数据，客户端据此路由后续请求
+      - 请求队列是所有网络线程共享的，而响应队列则是每个网络线程专属的
+        - Purgatory 组件：它是用来缓存延时请求（Delayed Request）的。所谓延时请求，就是那些一时未满足条件不能立刻处理的请求。比如 acks=all的PRODUCE请求
+- 请求分类
+  - 数据类
+    - PRODUCE/FETCH
+  - 控制类
+    - 控制类请求有这样一种能力：它可以直接令数据类请求失效！
