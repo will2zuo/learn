@@ -1,11 +1,10 @@
 package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
 func main() {
-	fmt.Println(AddOne([]int{9}))
+	//fmt.Println(AddOne([]int{9}))
+	turn([]int{1, 2, 3, 4, 5}, 3)
 }
 
 // AddOne  数组加 1
@@ -37,4 +36,33 @@ func AddOne(nums []int) []int {
 		}
 	}
 	return append([]int{1}, nums...)
+}
+
+func turn(nums []int, k int) []int {
+	if len(nums) == 0 || len(nums) == 1 {
+		return nums
+	}
+
+	for i := 0; i < k; i++ {
+		index := nums[len(nums)-1]
+		copy(nums[1:], nums[0:len(nums)-1])
+		nums[0] = index
+	}
+	fmt.Println(nums)
+	return nums
+}
+
+func index(nums []int) int {
+	sum := 0
+	for _, num := range nums {
+		sum += num
+	}
+	lSum := 0
+	for i, num := range nums {
+		if sum-num == 2*lSum {
+			return i
+		}
+		lSum += num
+	}
+	return -1
 }
